@@ -1,18 +1,31 @@
 defmodule BookStore.ManningBookScraper do
   @manning_host "www.manning.com"
+
   @url "https://#{@manning_host}/catalog"
 
   @poison_opts [
-    timeout: :timer.seconds(100),
-    recv_timeout: :timer.seconds(100)
+    timeout: :timer.seconds(1_000),
+    recv_timeout: :timer.seconds(1_000)
   ]
 
   def get_manning_books() do
     get_manning_catalog_page()
     |> get_book_links_from_page()
-    |> Task.async_stream(&get_book_details/1)
-    |> Task.await(:timer.seconds(2000))
+    |> Task.async_stream(
+      &get_book_details/1,
+      timeout: :timer.seconds(1_000)
+    )
+    |> Enum.map(fn {:ok, book_details} -> book_details end)
+    |> Jason.encode!()
+    |> then(
+      &File.write!(
+        data_file_location(),
+        &1
+      )
+    )
   end
+
+  def data_file_location, do: "./books_data.exs"
 
   defp get_manning_catalog_page,
     do: HTTPoison.get!(@url, [], @poison_opts).body
@@ -31,16 +44,16 @@ defmodule BookStore.ManningBookScraper do
   end
 
   defp get_book_details(book_url) do
-    parsed_page =
-      HTTPoison.get!(book_url, @poison_opts).body
-      |> Floki.parse_document!()
-
-    %{
-      title: get_book_title(parsed_page),
-      authors: get_book_author(parsed_page),
-      description: get_book_description(parsed_page),
-      prices: get_book_prices(parsed_page)
-    }
+    HTTPoison.get!(book_url, @poison_opts).body
+    |> Floki.parse_document!()
+    |> then(
+      &%{
+        title: get_book_title(&1),
+        authors: get_book_author(&1),
+        description: get_book_description(&1),
+        prices: get_book_prices(&1)
+      }
+    )
   end
 
   defp get_book_prices(parsed_page),
